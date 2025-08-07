@@ -1,11 +1,10 @@
-streamlit==1.29.0
+streamlit
 pandas
 numpy
 matplotlib
 seaborn
 scikit-learn
-xgboost
 imblearn
+xgboost
 shap
 joblib
-requests
