@@ -17,6 +17,9 @@ import os
 import io
 import requests
 
+
+
+
 # --- Configuration & Setup ---
 st.set_page_config(page_title="Credit Card Fraud Detection", layout="wide")
 st.title("🔐 Credit Card Fraud Detection App")
@@ -25,9 +28,8 @@ DATA_FILE = "creditcard.csv"
 MODEL_FILE = "fraud_model.joblib"
 SCALER_FILE = "scaler.joblib"
 
-# --- Debug info (remove after deployment) ---
-st.write("Current working directory:", os.getcwd())
-st.write("Files in current directory:", os.listdir())
+
+
 
 # --- Session State Management ---
 if 'model_trained' not in st.session_state:
@@ -47,47 +49,40 @@ if 'model_trained' not in st.session_state:
         'y_pred': None
     })
 
-# --- Load model & scaler early, cached ---
-@st.cache_resource
-def load_model_and_scaler():
-    if not os.path.exists(MODEL_FILE):
-        st.error(f"Model file '{MODEL_FILE}' not found in {os.getcwd()}. Please upload it in the repo root.")
-        return None, None
-    if not os.path.exists(SCALER_FILE):
-        st.error(f"Scaler file '{SCALER_FILE}' not found in {os.getcwd()}. Please upload it in the repo root.")
-        return None, None
-    model = joblib.load(MODEL_FILE)
-    scaler = joblib.load(SCALER_FILE)
-    return model, scaler
 
-if not st.session_state.model_trained:
-    model, scaler = load_model_and_scaler()
-    if model is not None and scaler is not None:
-        st.session_state.model = model
-        st.session_state.scaler = scaler
-        st.session_state.model_trained = True
-        # Set model_choice based on loaded model type
-        if isinstance(model, RandomForestClassifier):
-            st.session_state.model_choice = "Random Forest"
-        elif isinstance(model, XGBClassifier):
-            st.session_state.model_choice = "XGBoost"
-        else:
-            st.session_state.model_choice = "Ensemble"
+
+
+
+# @st.cache_data
+# def load_data_from_url(url):
+#     response = requests.get(url)
+#     df = pd.read_csv(io.StringIO(response.text))
+#     return df
+#
+# CSV_URL = "https://drive.google.com/uc?export=download&id=1-AmrZLwBvrtMa0KbnwHCyyoX88sK-bBa"
+#
+# df = load_data_from_url(CSV_URL)
+
+
+
+
+
 
 # --- Data Loading & Preprocessing ---
 @st.cache_data
 def load_and_preprocess_data():
+    """Load data, handle missing files, and perform preprocessing (scaling & SMOTE)."""
     try:
         if not os.path.exists(DATA_FILE):
-            st.error(f"Dataset file '{DATA_FILE}' not found in {os.getcwd()}. Please upload it in the repo root.")
-            return None
+            st.error(f"Dataset file '{DATA_FILE}' not found. Please ensure it's in the same directory.")
+            return None  # Return None on error
 
         df = pd.read_csv(DATA_FILE)
         required_cols = [f'V{i}' for i in range(1, 29)] + ['Amount', 'Class']
         if not all(col in df.columns for col in required_cols):
             missing = set(required_cols) - set(df.columns)
             st.error(f"Missing required columns in dataset: {missing}")
-            return None
+            return None  # Return None on error
 
         X = df.drop(['Class', 'Time'], axis=1)
         y = df['Class']
@@ -109,17 +104,26 @@ def load_and_preprocess_data():
 
     except Exception as e:
         st.error(f"Error loading or preprocessing data: {str(e)}")
-        return None
+        return None  # Return None on any other error
 
+
+
+
+
+# Load and preprocess data on first run
 if not st.session_state.data_loaded:
     with st.spinner("Loading and preprocessing data..."):
+        # Corrected block to handle the potential NoneType return
         data_tuple = load_and_preprocess_data()
         if data_tuple is not None:
             st.session_state.df, st.session_state.X_train, st.session_state.y_train, \
                 st.session_state.X_test, st.session_state.y_test, st.session_state.scaler = data_tuple
             st.session_state.data_loaded = True
         else:
-            st.stop()
+            st.stop()  # Stop the app gracefully if data loading failed
+
+
+
 
 # --- EDA Section ---
 st.header("1. Dataset Overview")
@@ -139,6 +143,9 @@ with col2:
     sns.countplot(x='Class', data=st.session_state.df, ax=ax)
     st.pyplot(fig)
 
+
+
+
 # --- Model Training & Loading ---
 st.header("2. Model Training")
 st.markdown("Choose a model and train it. The trained model and scaler will be saved locally for future use.")
@@ -147,6 +154,32 @@ model_choice = st.selectbox(
     ["Random Forest", "XGBoost", "Ensemble"],
     key="model_select"
 )
+
+
+
+
+# Load existing model if available on app restart
+if os.path.exists(MODEL_FILE) and os.path.exists(SCALER_FILE) and not st.session_state.model_trained:
+    with st.spinner("Loading saved model and scaler..."):
+        try:
+            st.session_state.model = joblib.load(MODEL_FILE)
+            st.session_state.scaler = joblib.load(SCALER_FILE)
+            st.session_state.model_trained = True
+
+            # This handles the model choice not being set from a loaded joblib
+            if isinstance(st.session_state.model, RandomForestClassifier):
+                st.session_state.model_choice = "Random Forest"
+            elif isinstance(st.session_state.model, XGBClassifier):
+                st.session_state.model_choice = "XGBoost"
+            else:
+                st.session_state.model_choice = "Ensemble"
+
+            st.session_state.y_proba = st.session_state.model.predict_proba(st.session_state.X_test)[:, 1]
+            st.session_state.y_pred = (st.session_state.y_proba >= st.session_state.threshold).astype(int)
+        except Exception as e:
+            st.warning(f"Could not calculate metrics for loaded model: {e}")
+            st.session_state.model_trained = False
+
 
 if st.button("Train Model" if not st.session_state.model_trained else "Retrain Model", type="primary", key="train_btn"):
     with st.status("Training in progress...", expanded=True) as status:
@@ -182,11 +215,15 @@ if st.button("Train Model" if not st.session_state.model_trained else "Retrain M
             status.update(label="Training complete!", state="complete")
             st.success("Model trained and saved successfully!")
 
-            st.experimental_rerun()
+            st.rerun()
 
         except Exception as e:
             status.update(label="Training failed", state="error")
             st.error(f"Training Error: {str(e)}")
+
+
+
+
 
 # --- Model Evaluation ---
 if st.session_state.model_trained:
@@ -245,6 +282,9 @@ if st.session_state.model_trained:
                                               ax=ax)
         st.pyplot(fig)
 
+
+
+
     # --- Feature Importance (SHAP) ---
     st.header("4. Feature Importance (SHAP)")
     try:
@@ -266,6 +306,10 @@ if st.session_state.model_trained:
         st.pyplot(fig)
     except Exception as e:
         st.warning(f"SHAP visualization unavailable: {str(e)}")
+
+
+
+
 
 # --- Prediction Interface ---
 st.header("5. Make Predictions on New Data")
@@ -306,8 +350,10 @@ if uploaded_file and st.session_state.model_trained:
 
         display_df = results_df.head(50) if len(results_df) > 50 else results_df
 
+
         def color_fraud(val):
             return 'color: red; font-weight: bold;' if val == 'Fraud' else ''
+
 
         st.dataframe(
             display_df.style.applymap(color_fraud, subset=['Prediction']).format({'Fraud_Probability': '{:.2%}'})
@@ -328,6 +374,17 @@ if uploaded_file and st.session_state.model_trained:
 elif uploaded_file and not st.session_state.model_trained:
     st.warning("Please train a model first before making predictions.")
 
+
+
+
 # --- Footer ---
 st.markdown("---")
 st.caption("©️ 2025 Fraud Detection System | v2.7")
+
+
+
+
+
+#how to access this code or run the code...
+#  cd /Users/asadullahibnferdous/Documents/AI\ and\ ML/
+#  streamlit run app.py
